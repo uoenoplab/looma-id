@@ -1,288 +1,472 @@
 ---
-title: "Looma: Low-Latency Post-Quantum Mutual Authentication for TLS"
+title: "Looma: Low-Latency Post-Quantum Authentication for TLS 1.3 in Datacenters"
 abbrev: "Looma"
 category: info
-
-docname: draft-ma-cfrg-looma-latest
+docname: draft-ma-cfrg-looma-00
 submissiontype: IRTF
 number:
 date:
-consensus: true
+consensus: false
 v: 3
 area: Security
 workgroup: CFRG
 keyword:
  - post-quantum cryptography
- - TLS authentication
+ - TLS 1.3
+ - authentication
  - online/offline signatures
  - WOTS+
- - Dilithium
- - mutual authentication
-
+ - datacenters
 venue:
   group: CFRG
   type: Research Group
   mail: cfrg@ietf.org
   arch: https://mailarchive.ietf.org/arch/browse/cfrg/
-  github: 
-  latest: 
-
+  github: https://github.com/
+  latest: https://datatracker.ietf.org/doc/draft-ma-cfrg-looma/
 author:
- -
-    fullname: Xinshu Ma
-    organization: University of Edinburgh
-    email: x.ma@ed.ac.uk
- -
-    fullname: Michio Honda
-    organization: University of Edinburgh
-    email: michio.honda@ed.ac.uk
-
+ - ins: X. Ma
+   name: Xinshu Ma
+   org: University of Edinburgh
+   email: x.ma@ed.ac.uk
+ - ins: M. Honda
+   name: Michio Honda
+   org: University of Edinburgh
+   email: michio.honda@inf.ed.ac.uk
 normative:
-
+  RFC8446:
+  RFC2119:
+  RFC8174:
 informative:
-
+  LoomaNDSS:
+    target: "https://dx.doi.org/10.14722/ndss.2026.240074"
+    title: "Looma: A Low-Latency PQTLS Authentication Architecture for Cloud Applications"
+    author:
+      - name: "Xinshu Ma"
+      - name: "Michio Honda"
+    date: 2026
+  RFC8391:
+  RFC9345:
 ---
 
-# abstract
+# Abstract
 
-This document specifies Looma, a low-latency post-quantum authentication architecture for TLS 1.3. Looma is designed for high-rate mutual-TLS deployments in cloud and microservice environments. It applies the online/offline signature paradigm: the expensive post-quantum signature (Dilithium-2) is performed offline, while the latency-critical path uses only a fast one-time WOTS+ signature whose public key is pre-distributed and cryptographically bound to the long-term Dilithium public key. Two fallback modes guarantee correctness on first contact or cache miss. Looma preserves EUF-CMA security at NIST Level 1 and requires only new signature formats and one optional TLS extension.
+Post-quantum (PQ) authentication in TLS 1.3 can add tens to hundreds of microseconds of
+handshake processing time. In cloud datacenters, where mutual authentication is mandatory, connections are short-lived and handshake rates are high, this cost becomes a dominant contributor to end-to-end request latency.
 
+This document specifies Looma, an online/offline authentication architecture integrated
+into the TLS 1.3 handshake. Looma replaces the on-path, per-handshake PQ signature with
+a fast, one-time signature over the TLS transcript and moves expensive work (including
+the multi-use PQ signature) to an asynchronous background plane. Looma includes a
+fallback strategy to preserve correct authentication when the verifier does not have the
+peer's one-time verification key cached.
+
+This document is intended as a basis for CFRG review of the cryptographic and protocol
+design. It is written in an IETF style and uses RFC 2119 language. Some code points are
+left as "TBD" pending IANA considerations and/or future standard-track work.
+
+# Status of This Memo
+
+This Internet-Draft is submitted in full conformance with the provisions of BCP 78 and BCP 79.
+
+Internet-Drafts are working documents of the Internet Engineering Task Force (IETF).
+Note that other groups may also distribute working documents as Internet-Drafts.
+The list of current Internet-Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+Internet-Drafts are draft documents valid for a maximum of six months and may be updated,
+replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts
+as reference material or to cite them other than as "work in progress."
 
 # Introduction
 
-Quantum computers threaten the cryptographic foundations of classical TLS. Post-quantum signature schemes standardized by NIST (Dilithium, Falcon, SPHINCS+) impose significantly higher computational and bandwidth costs than classical schemes during the TLS handshake. In cloud environments these costs become a serious deployment barrier.
+TLS 1.3 authentication relies on digital signatures over the handshake transcript in the
+CertificateVerify message {{RFC8446}}. For post-quantum migration, widely deployed
+candidates (e.g., Dilithium and Falcon) incur higher signing and verification costs than
+classical signatures.
 
-Modern cloud applications are built from microservices and serverless functions. Each inter-service RPC triggers a fresh TLS handshake. Containers and pods are frequently created and destroyed, rendering session resumption ineffective. Service-mesh sidecars (Istio, Linkerd, etc.) add extra mTLS hops along every path. The resulting handshake rate is orders of magnitude higher than on the public Internet.
+In datacenter deployments, microservices and service meshes create many short-lived
+connections and frequent handshakes. Looma targets this setting by splitting
+authentication into:
 
-Datacenter networks are engineered for sub-50 µs fabric latency; therefore the dominant delay is host cryptographic processing. Mutual authentication (mTLS) is mandatory inside the trust boundary to prevent unauthorized service-to-service access. In mTLS both endpoints sign and verify, doubling the authentication cost compared with server-only TLS. When post-quantum signatures are used, authentication can consume 54–70 % of total handshake latency (see {{Looma-NDSS26}} for measurements).
+* **Foreground plane (on-path)**: performs per-handshake fast signing and verification.
+* **Background plane (off-path)**: precomputes and distributes one-time verification keys
+  authenticated by a long-term PQ signature.
 
-Existing accelerations do not close this gap:
+The Looma design and evaluation appear in {{LoomaNDSS}}.
 
-* Hardware offloading (GPUs, SmartNICs) reduces CPU usage but adds PCIe/network round-trips that do not shrink end-to-end latency.  
-* Protocol optimisations (TLS 1.3 1-RTT, KEMTLS, session resumption) reduce round-trips or replace signatures with KEMs, yet still leave the remaining signature operations on the critical path.  
-* Cryptographic optimisations focus primarily on key exchange; authentication remains the bottleneck for mTLS.
+## Goals
 
-Looma addresses the authentication bottleneck directly. It splits each post-quantum signature into an offline pre-computation phase (performed asynchronously by a background plane) and an ultra-fast online phase executed during the handshake. The online phase uses only a one-time WOTS+ signature whose public key has been pre-distributed through a simple KeyDist service. Two fallback modes guarantee interoperability even on first contact. The design is fully compatible with TLS 1.3 and requires no changes to the wire format of existing messages beyond new signature encodings.
+Looma is designed to:
 
-# Conventions and Definitions
+* Reduce the on-path computational cost of TLS 1.3 authentication.
+* Preserve the authentication semantics of TLS 1.3 (identity bound to certificate keys).
+* Minimize additional trust in auxiliary infrastructure (e.g., key distribution).
 
-{::boilerplate bcp14-tagged}
+## Non-goals
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 {{RFC2119}} {{RFC8174}} when, and only when, they appear in all capitals.
+This document does not specify:
 
-## Notations
-TODO: Symbols that will be used in the following sections, e.g., digital signatures and Looma Authentication section.
+* A new certificate format. Looma uses existing X.509 certificates and CA workflows.
+* A new key exchange. Looma is orthogonal to ECDHE, hybrid key exchange, or KEM-based
+  approaches.
+* Session resumption behavior. PSK resumption handshakes do not use CertificateVerify
+  and are out of scope.
 
-# Digital Signatures
+# Terminology
 
-## Digital Signatures
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT",
+"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as
+described in BCP 14 {{RFC2119}} {{RFC8174}} when, and only when, they appear in all capitals,
+as shown here.
 
-A digital signature scheme is a tuple of algorithms (KeyGen, Sign, Verify) with security parameter κ:
+This document uses the following terms:
 
-(pk, sk) ← KeyGen(κ)  
-σ ← Sign(m, sk)  
-b ∈ {0,1} ← Verify(m, σ, pk)
+* **Endpoint**: a TLS client or server participating in the handshake.
+* **Long-term signing key (LT key)**: a multi-use PQ key pair (e.g., Dilithium-2).
+  The LT public key is bound to the endpoint identity via an X.509 certificate.
+* **One-time signature (OTS)**: a signature scheme intended to sign at most one message
+  per key pair. Looma uses WOTS+.
+* **WOTS+ key pair**: an OTS signing key `SK_ots` and verification key `PK_ots`.
+* **KeyDist**: a repository service used to publish OTS verification keys authenticated
+  under the LT key. KeyDist is not trusted for integrity; endpoints verify signatures.
+* **Cache hit / miss**: whether the verifier has a validated `PK_ots` for the peer at
+  handshake time.
 
-## Online/Offline Signatures
+# Overview
 
-An online/offline signature scheme extends the above with two additional algorithms (PreSign, FastSign):
+Looma adapts the Even-Goldreich-Micali online/offline paradigm to TLS 1.3 authentication:
 
-ρ ← PreSign(sk)  
-σ ← FastSign(m, ρ, sk)  
-b ∈ {0,1} ← Verify(m, σ, pk)
+1. Offline: an endpoint generates a batch of WOTS+ key pairs and authenticates them using
+   a long-term PQ signature over a Merkle tree root.
+2. Online: during the TLS handshake, the endpoint signs the TLS CertificateVerify input
+   using a fresh WOTS+ key. The verifier validates the WOTS+ signature using a cached
+   `PK_ots` or falls back to an authenticated Merkle proof.
 
-The offline phase (PreSign) performs heavy computation independent of the message. The online phase (FastSign) is extremely fast. Looma instantiates this paradigm with Dilithium-2 (offline) and WOTS+ (online).
+Two deployment modes are supported:
 
-## One-Time Signatures
+* **Dual-signature mode**: each handshake carries enough data for verification without any
+  prior cached key (higher bandwidth, simple behavior).
+* **Hybrid mode**: the server advertises a compact hint indicating which client keys are
+  cached; the client includes fallback material only on cache miss (lower bandwidth).
 
-### One-Time Signature
-TODO: overview of OTS
+# Cryptographic Building Blocks
 
-### WOTS+
-TODO: preliminaries of WOTS+ 
-Looma uses the Winternitz One-Time Signature Plus (WOTS+) scheme {{RFC8391}} {{SPHINCS+}} with parameter w = 4 and the Haraka-512 hash function (chosen for performance; SHA-256 and BLAKE3 are also permitted). A WOTS+ key pair consists of 67 secret values (for 256-bit message + checksum) and the corresponding public key obtained by iterating the chaining function w-1 times.
+## Long-term PQ signature
 
-# TLS Authentication
+Looma assumes an EUF-CMA secure multi-use signature scheme (e.g., Dilithium-2).
+The LT public key is authenticated in the usual TLS way via X.509 certificate validation.
 
-## TLS 1.3 Handshake Overview
+This document describes one instantiation aligned with {{LoomaNDSS}}:
+Dilithium-2 as the LT signature scheme.
 
-A TLS 1.3 handshake consists of two flights. The client sends ClientHello; the server replies with ServerHello, EncryptedExtensions, Certificate (server), CertificateVerify (server), and Finished. When mutual authentication is required the server also sends CertificateRequest. The client then sends Certificate (client), CertificateVerify (client), and Finished.
+## WOTS+ (Winternitz One-Time Signature Plus)
 
-All signatures are computed over a transcript hash (HT) that includes every handshake message up to the point the signature is generated (see {{RFC8446}} Section 4.4.1). The transcript guarantees that the signature binds the entire handshake, including the key exchange and certificate chain.
+Looma uses WOTS+ as the OTS. WOTS+ keys are one-time: an endpoint MUST NOT sign more than one
+distinct CertificateVerify input with the same `SK_ots`.
 
-## mTLS Messages and Processing
-TODO: Explain what is mutual authentication, why cloud needs it
+### Parameters
 
-The three additional messages in mTLS are:
+To avoid ambiguity, this document defines a single mandatory parameter set (other sets MAY
+be specified by future documents).
 
-* **CertificateRequest** (sent by server in the first flight): indicates that client authentication is required and may carry extensions. In Looma this message also carries the optional "looma_cache_hint" extension (see Section 5.3.2).
+The mandatory set matches the Looma implementation evaluated in {{LoomaNDSS}}:
 
-* **Certificate** (sent by both endpoints): carries the X.509 certificate containing the long-term Dilithium-2 public key. Certificates are assumed to be pre-issued; their validation (including the CA signature) occurs before the handshake begins and therefore incurs no per-handshake cost.
+* `n = 32` bytes (hash output length).
+* Winternitz parameter `w = 4`.
+* `ℓ = 133` chains (derived by WOTS+ encoding for `n=32, w=4`).
 
-* **CertificateVerify** (sent by both endpoints after their Certificate message): contains the digital signature over the transcript hash HT. In classical TLS this is the ECDSA/RSA signature produced with the private key corresponding to the certificate. In Looma this field carries a Looma signature (WOTS+ plus optional fallback components) instead.
+The hash function used inside WOTS+ is denoted `H_ots`. This document does not require a
+specific `H_ots` at the protocol level; however, the reference implementation uses Haraka
+(and a SIMD variant) for performance as described in {{LoomaNDSS}}.
 
-The server processes the client CertificateVerify after receiving the client’s Finished message. The client processes the server CertificateVerify before sending its own Finished message. Any failure aborts the handshake with a fatal alert.
+### Nonce
 
-# The Looma Authentication Architecture
+The WOTS+ signature is computed over the TLS CertificateVerify input (see Section 4.4.3 of
+{{RFC8446}}) and an associated nonce `r`. The nonce serves as domain separation and helps
+avoid accidental cross-protocol reuse. The nonce MUST be unique per WOTS+ signing key.
 
-## Overall Design
+# Key Provisioning and Authentication (Background Plane)
 
-Looma organises each endpoint into two logical planes (Figure 4 in {{Looma-NDSS26}}):
+This section defines the data produced off-path and consumed by the handshake.
 
-* **Foreground plane** (latency-critical path): performs only the fast online WOTS+ signing and verification operations during the TLS handshake.  
-* **Background plane** (asynchronous): continuously generates fresh WOTS+ key pairs, organises them into Merkle trees, signs the roots with the long-term Dilithium-2 key, uploads the signed records to the KeyDist service, and fetches peers’ records.
+## Key records
 
-A lightweight, untrusted KeyDist service acts as a simple repository for these signed public-key batches. Because every key record is cryptographically signed by the owner’s Dilithium-2 key, KeyDist may be compromised without breaking authentication security.
+An endpoint periodically produces a **key record** containing a batch of OTS verification keys.
+A key record MUST include:
 
-Each endpoint possesses a long-term Dilithium-2 key pair (PK_d2, SK_d2). The public key is certified by an internal CA in the usual X.509 fashion. During a handshake the Certificate and CertificateVerify messages still carry PK_d2 (for fallback verification) but the actual online signature is a WOTS+ signature whose public key was pre-distributed via KeyDist.
+* `owner_id`: an identifier for the endpoint identity that is consistent with the endpoint
+  certificate identity (see {{owner-id}}).
+* `epoch`: a monotonically increasing identifier scoped to `(owner_id, verifier_group_id)`.
+* `verifier_group_id`: a locally defined label identifying which peer set this batch targets.
+* `valid_from`, `valid_to`: validity interval for the OTS keys in this record.
+* `merkle_root`: root of the Merkle tree over OTS public keys.
+* `sig_lt`: LT signature authenticating the key record metadata and `merkle_root`.
+* `pk_list` (OPTIONAL): list of OTS public keys if the distribution mechanism delivers full
+  keys rather than Merkle leaves; this document assumes full keys are distributable but does
+  not mandate KeyDist internal format.
 
-The design guarantees that, in the common case of cache hit, both signing and verification complete in < 1 µs while preserving full NIST Level 1 post-quantum security.
+Key record authentication:
 
-## Assumptions (Threat Model and System Model)
+* The producer MUST compute `sig_lt = Sign_lt(H(record_fields), SK_lt)`, where `record_fields`
+  includes the items above, in a canonical encoding.
+* A consumer MUST verify `sig_lt` under the LT public key from the producer's validated
+  certificate, before accepting any OTS keys derived from the record.
 
-- The cloud substrate (hypervisor, host OS, service mesh proxies) is trusted at bootstrap but subject to later compromise.  
-- Endpoints communicate only with a small, stable set of peers (typical of microservices).  
-- AEAD record protection, hash functions, and the underlying Dilithium-2 and WOTS+ schemes are existentially unforgeable.  
-- The KeyDist service is untrusted; all security is cryptographic.
+### owner-id {#owner-id}
 
-## Offline Key Distribution
+`owner_id` is used as a stable index for caching the peer's OTS keys.
+`owner_id` MUST be bound to the peer identity authenticated by TLS certificate validation.
 
-### Key Pre-generation
+RECOMMENDED: `owner_id = SHA-256(SPKI)` where `SPKI` is the DER-encoded SubjectPublicKeyInfo
+of the LT public key in the certificate. Other constructions MAY be used if they provide a
+collision-resistant, stable binding to the LT key.
 
-Each endpoint maintains one or more verifier groups (initially a single group containing all known peers). For each group it periodically generates a fresh batch of WOTS+ key pairs. It organises the corresponding public keys into a Merkle tree and signs the root with SK_d2. The resulting key record (public keys, Merkle root, Dilithium signature, certificate, metadata) is ready for upload.
+## Merkle tree construction
 
-### Key Distribution
-TODO: Overview of Key Distribution and why we need it
+An endpoint constructs a binary Merkle tree over the batch of OTS public keys. The leaf value
+for key `i` is:
 
-#### KeyDist Server
+`leaf_i = H_leaf( encode(PK_ots_i) )`
 
-KeyDist is a simple storage service reachable over a long-term TLS channel. It stores <KeyUpdate, keyrecord, owner-id> tuples and performs only syntactic validation (certificate check, Merkle-tree reconstruction, Dilithium signature verification). It does not need to be trusted for security.
+where `H_leaf` is a collision-resistant hash and `encode(PK_ots_i)` is the canonical encoding
+of the OTS public key for the parameter set.
 
-#### Key Upload
+The tree root is `merkle_root`. The record MUST allow a verifier to validate an inclusion proof.
 
-The background plane uploads a new key record whenever the local queue size for any verifier group falls below a configurable threshold. The upload is sent over the long-term authenticated channel to KeyDist.
+Implementation note (informative): {{LoomaNDSS}} evaluates `B = 1024` leaves and 32-byte hash
+values, yielding a proof of `log2(B) * 32` bytes (320 bytes).
 
-#### Key Fetch
+## KeyDist behavior
 
-Peers periodically issue KeyFetch requests for each known owner-id. Upon receipt they verify the Dilithium signature on the root, reconstruct the Merkle tree if needed, and cache the WOTS+ public keys indexed by their leaf identifier.
+KeyDist is an optional distribution component that stores and serves key records. This document
+treats KeyDist as an untrusted repository:
 
-## Online Authentication
-TODO: Overview of the online authentication
+* KeyDist MAY validate records before storing them, but consumers MUST NOT rely on KeyDist
+  validation for security.
+* Consumers MUST verify `sig_lt` and associated metadata locally.
+* A compromised KeyDist can cause denial of service (e.g., withholding records), but MUST NOT
+  enable signature forgery if endpoints follow this specification.
 
+# TLS 1.3 Integration (Foreground Plane)
 
-### Fast Signing
+This section specifies how Looma is carried in TLS 1.3 and how the CertificateVerify message
+is generated and verified.
 
-When the foreground plane must produce a CertificateVerify:
+## Negotiation
 
-1. Dequeue a fresh WOTS+ secret key SK from the local queue for the appropriate verifier group.  
-2. Compute the one-time signature  
-   σ_wots ← FastSign(HT, SK, r)  
-   where HT is the current transcript hash and r is a fresh 32-byte nonce.  
-3. Construct the Looma signature according to the chosen fallback mode (Section 5.3) and place it in the CertificateVerify.payload field.
+Looma is negotiated using the TLS 1.3 `signature_algorithms` extension and one new extension.
 
+* Endpoints that support Looma MUST advertise one or more Looma signature schemes in
+  `signature_algorithms` (code points TBD).
+* The server selects a Looma scheme in the usual TLS 1.3 way when producing CertificateVerify.
+* Hybrid mode additionally uses a server-to-client hint extension (Section {{hybrid-hint}}).
 
-### Fast Verification
+If Looma is not negotiated, endpoints MUST use standard TLS 1.3 authentication with the
+selected non-Looma signature scheme.
 
-Upon receipt of a peer’s CertificateVerify:
+## Looma signature format
 
-1. Extract σ_wots, r, and pk_id.  
-2. If a cached WOTS+ public key PK for (peer, pk_id) exists, reconstruct the expected public key PK* from σ_wots, HT, and r and compare it with the cached value (constant-time).  
-3. If no cached key exists, invoke the fallback verification procedure of the chosen mode.
+Looma defines a signature wrapper carried in the `CertificateVerify.signature` field.
 
-## Fallback Strategy
+All multi-byte integers are network byte order.
 
-Looma defines two modes. The hybrid mode is RECOMMENDED for production deployments.
+~~~text
+struct {
+  uint8  looma_mode;        /* 0 = dual, 1 = hybrid_hit, 2 = hybrid_miss */
+  opaque owner_id<0..255>;  /* as defined in Section {#owner-id} */
+  opaque pk_id<0..255>;     /* identifies which OTS key is used */
+  opaque nonce<0..255>;     /* per-signature nonce r */
+  opaque wots_sig<0..2^16-1>;
+  opaque fallback<0..2^16-1>; /* present only in modes that carry fallback */
+} LoomaSignature;
+~~~
 
-### Dual-Signature Fallback
+`pk_id` identifies the one-time public key within the producer's current key record. The mapping
+of `pk_id` to a concrete key is deployment-specific, but `pk_id` MUST be sufficient for the verifier
+to locate the intended cached key or validate it via fallback data.
 
-The signer always includes the full set of fallback components (WOTS+ signature, Merkle proof, Merkle root, Dilithium signature on the root, nonce, pk_id). The verifier uses the cached key if present; otherwise it performs the complete verification chain. This mode adds a fixed bandwidth overhead but requires no extra TLS extension.
+### Dual-signature mode (`looma_mode = 0`)
 
-#### Signature Construction
+In dual-signature mode, `fallback` MUST contain:
 
-Looma-dual = {
-  wots_signature,
-  merkle_proof,
-  merkle_root,
-  dilithium_signature_on_root,
-  nonce,
-  pk_id
-}
+~~~text
+struct {
+  opaque merkle_root<0..2^16-1>;
+  opaque merkle_proof<0..2^16-1>;
+  opaque sig_lt<0..2^16-1>;
+} LoomaFallbackDual;
+~~~
 
-#### Signing Operation
+The verifier uses the peer certificate to obtain `PK_lt` and verify `sig_lt` over the authenticated
+root and associated record fields (the record fields MUST be reconstructible or transmitted as part
+of the proof bundle in a future version; see Section {{open-issues}}).
 
-Same as FastSign plus construction of the Merkle proof and Dilithium signature on the root.
+### Hybrid-hit mode (`looma_mode = 1`)
 
-#### Verification Operation
+In hybrid-hit mode, `fallback` MUST be empty. The verifier MUST have a cached, validated `PK_ots`
+for `(owner_id, pk_id)`.
 
-If cached key present → FastVerify only.  
-Else → Dilithium-Verify(root) + Merkle-Verify + WOTS+ reconstruction.
+### Hybrid-miss mode (`looma_mode = 2`)
 
+In hybrid-miss mode, `fallback` is identical to `LoomaFallbackDual`.
 
-### Hybrid Fallback
+## Computing CertificateVerify
 
-The server includes a compact Bloom filter of currently cached peer IDs in a new "looma_cache_hint" extension inside CertificateRequest. The client inspects the filter for its own ID:
+TLS 1.3 defines the signed content for CertificateVerify as:
 
-* Cache hit → sends the minimal hybrid-hit signature (σ_wots, r, pk_id).  
-* Cache miss (or false positive) → sends the full hybrid-miss signature (identical to dual-signature).
+* a context string,
+* a separator,
+* and the transcript hash (see Section 4.4.3 of {{RFC8446}}).
 
-On a Bloom-filter false positive the server detects the mismatch during verification, sends the "bad_offline_sig" alert, and falls back to a full Dilithium handshake. The Bloom filter size (56 bytes for ≤15 peers) fits comfortably inside a single extension.
+For Looma, the endpoint MUST compute the TLS-defined input bytes exactly as {{RFC8446}} specifies.
+Let that byte string be `cv_input`.
 
+The endpoint then computes:
 
-#### Signature Construction
+* `wots_sig = WOTS.Sign(cv_input, SK_ots, nonce)`
 
-hybrid-hit = { wots_signature, nonce, pk_id }  
-hybrid-miss = { wots_signature, merkle_proof, merkle_root, dilithium_signature_on_root, nonce, pk_id }
+and constructs `LoomaSignature` per the negotiated mode.
 
-#### Signing Operation
+The endpoint MUST ensure one-time use of `SK_ots` and MUST bind the WOTS+ signature to the selected
+mode, `owner_id`, `pk_id`, and `nonce` (e.g., by including these fields in `cv_input` via an inner
+hash) to prevent substitution attacks. One safe construction is:
 
-Identical to the dual-signature case when the client’s own ID is not in the Bloom filter.
+`wots_sig = WOTS.Sign( H_bind(looma_mode || owner_id || pk_id || nonce || cv_input), SK_ots )`
 
-#### Verification Operation
+where `H_bind` is collision-resistant. The reference design in {{LoomaNDSS}} signs the transcript
+and carries `(nonce, pk_id)` alongside the signature; this document adopts explicit binding.
 
-Same as dual-signature, plus a false-positive check: on Bloom-filter false positive the server MUST send a "bad_offline_sig" alert and fall back to a full Dilithium handshake.
+## Verifying CertificateVerify
 
-## Looma signature construction
- TODO: talk about any non-hash-based PQ signature can be turned into a Online/Offline style.
-Example construction: Dilthium-2 and WOTS+
+Given `cv_input` and a received `LoomaSignature`, the verifier proceeds as follows:
 
-### Implementation Optimizations
-TODO: list what we did clearly and for wots+ optimization, such that  other people can understand and do the same optimization as us.
+1. Determine the expected `PK_ots`:
+   * If in hybrid-hit mode, look up cached `PK_ots` using `(owner_id, pk_id)`.
+   * Otherwise, validate fallback data:
+     * verify `sig_lt` under the peer certificate LT public key,
+     * validate that the claimed `PK_ots` is included in `merkle_root` via `merkle_proof`,
+     * accept `PK_ots` and (optionally) cache it for future handshakes.
 
+2. Verify `wots_sig` over the bound input described above.
 
+3. Enforce one-time use:
+   * The verifier MUST ensure that `(owner_id, pk_id)` is not accepted more than once within the
+     applicable validity interval, unless the deployment defines a safe reuse policy (NOT RECOMMENDED).
 
-## TLS Modifications
+If any check fails, the handshake MUST be aborted with an appropriate TLS alert.
 
-* CertificateVerify.payload now carries a Looma signature instead of a raw Dilithium signature.  
-* An optional "looma_cache_hint" extension (IANA value to be assigned) may appear in CertificateRequest.  
-* No other wire-format changes are required.
+# Hybrid Mode Cache Hint Extension {#hybrid-hint}
 
+In hybrid mode, the server sends a compact hint indicating which client keys are cached, so that
+the client can select hybrid-hit vs hybrid-miss.
 
+This document defines a new TLS extension (type TBD) carried in the `CertificateRequest` message.
+
+~~~text
+struct {
+  uint8  version;
+  opaque owner_id_s<0..255>;  /* server owner_id to scope the hint */
+  opaque bloom<0..2^16-1>;    /* Bloom filter bitstring */
+  uint8  k;                   /* number of hash probes */
+} LoomaCacheHint;
+~~~
+
+The Bloom filter represents membership over client identifiers (e.g., client `owner_id` values)
+for which the server currently has a cached `PK_ots`. The exact element inserted MUST be specified
+by the deployment; RECOMMENDED is the client's `owner_id`.
+
+False positives are possible. If the server indicates membership but does not have the key, the
+server will reject hybrid-hit verification and the connection will fail. See Section {{fallback-on-fp}}
+for recovery behavior.
+
+# Fallback and Error Handling
+
+## Cache miss behavior
+
+If the verifier does not have the peer `PK_ots` cached:
+
+* In dual-signature mode, the verifier uses the fallback bundle.
+* In hybrid mode:
+  * If the client receives a hint indicating miss, it MUST send hybrid-miss (with fallback).
+  * If the client receives a hint indicating hit, it sends hybrid-hit (without fallback).
+
+## False positives and recovery {#fallback-on-fp}
+
+If a hybrid-hit handshake fails because the server cannot validate the signature due to missing
+cached key (e.g., Bloom false positive), endpoints SHOULD recover by retrying with a full
+(non-Looma) TLS 1.3 handshake using standard PQ authentication (e.g., Dilithium-2), or by retrying
+hybrid-miss if policy allows.
+
+This document does not define a new TLS alert. Implementations SHOULD use existing alerts such
+as `handshake_failure` or `illegal_parameter` to signal verification failure, consistent with
+{{RFC8446}} behavior.
 
 # Security Considerations
 
-Looma achieves EUF-CMA security at NIST Level 1 provided that either Dilithium-2 or WOTS+ (with Haraka-512, n=256, w=4) remains unbroken.  
+This section summarizes security arguments aligned with {{LoomaNDSS}}.
 
-A forgery requires either:
-- breaking Dilithium-2 on the Merkle root, or
-- forging a WOTS+ signature on an authentic public key.
+## Signature unforgeability
 
-Both events have negligible probability under the respective hardness assumptions. The KeyDist service can at worst cause denial-of-service; it cannot inject forged keys because every key record carries a verifiable Dilithium-2 signature.
+An adversary that forges a Looma CertificateVerify must either:
 
-Implementations MUST enforce one-time use of each WOTS+ key (local indexing) and MUST reject signatures outside the validity period.
+* forge the LT PQ signature authenticating `merkle_root`, or
+* forge a WOTS+ signature under an authenticated one-time public key, or
+* break collision resistance / second-preimage resistance needed by the Merkle tree and WOTS+.
+
+Assuming EUF-CMA security of the LT PQ signature and the security properties of WOTS+ and underlying
+hash functions, Looma provides transcript authentication comparable to the baseline TLS 1.3 signature
+scheme, with the additional requirement that one-time keys are not reused.
+
+## One-time key reuse
+
+Reusing a WOTS+ signing key across two different `cv_input` values can enable forgeries. Therefore:
+
+* Signers MUST enforce strict one-time use.
+* Verifiers SHOULD track used `(owner_id, pk_id)` values within the key validity interval.
+* Deployments MUST provision enough keys for the expected handshake rate and set key expiration to
+  bound state.
+
+## Binding to certificate identity
+
+Looma's OTS keys MUST be bound to the identity authenticated by the certificate. This document
+achieves binding by (a) authenticating `merkle_root` under the LT key from the certificate, and
+(b) scoping caches by `owner_id` derived from that LT key.
+
+## KeyDist compromise
+
+A malicious KeyDist can withhold, replay, or reorder key records, causing denial of service or
+performance degradation (e.g., more cache misses), but MUST NOT enable authentication forgery if
+endpoints perform local verification and enforce freshness/epoch rules.
+
+Deployments SHOULD consider availability hardening (replication, multi-source fetching) and should
+ensure that stale records do not cause key reuse.
+
+## Bloom filter privacy and integrity
+
+The cache hint can leak information about which client identifiers are cached by the server.
+Deployments concerned with this leakage SHOULD avoid hybrid mode or should scope hints to a small
+set of expected peers.
+
+An attacker who can modify the hint on-path can influence whether the client sends fallback material.
+However, the hint is carried inside the TLS handshake and is integrity protected by the handshake
+transcript; modifying it will fail the handshake.
 
 # IANA Considerations
 
-This document has no IANA actions.  
-(The "looma_cache_hint" extension value will be requested in a future version once consensus emerges.)
+This document anticipates the need for the following registries:
 
-# References
+* One or more entries in the TLS `SignatureScheme` registry for Looma signature schemes.
+* One entry in the TLS `ExtensionType` registry for `looma_cache_hint`.
 
-All other values are already defined in existing registries.
+This draft does not yet request code points and uses "TBD" placeholders.
 
+# Open Issues and Future Work {#open-issues}
 
---- back
+* Canonical encoding of key records and exact contents covered by `sig_lt`.
+* Precise definition of `pk_id` mapping and whether it is stable across epochs.
+* Whether to standardize a specific `H_ots` for interoperability, or define a registry.
+* Interaction with delegated credentials {{RFC9345}} and deployment in service meshes.
 
-# Acknowledgments
-{:numbered="false"}
+# Acknowledgements
 
-The authors thank the NDSS 2026 reviewers and the CFRG community for valuable feedback.
+The Looma design is described in {{LoomaNDSS}}. The authors thank the CFRG community for feedback.
