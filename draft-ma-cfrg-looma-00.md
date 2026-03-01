@@ -81,16 +81,14 @@ as reference material or to cite them other than as "work in progress."
 
 TLS 1.3 authentication relies on digital signatures over the handshake transcript in the
 CertificateVerify message {{RFC8446}}. For post-quantum migration, widely deployed
-candidates (e.g., Dilithium and Falcon) incur higher signing and verification costs than
+candidates (e.g., Dilithium and Falcon) incur higher signing costs than
 classical signatures.
 
-In datacenter deployments, microservices and service meshes create many short-lived
-connections and frequent handshakes. Looma targets this setting by splitting
-authentication into:
+In datacenter deployments, microservices and serverless architectures create many short-lived
+connections and frequent handshakes along with mutual authentications. Looma targets this setting by splitting PQ authentication into:
 
 * **Foreground plane (on-path)**: performs per-handshake fast signing and verification.
-* **Background plane (off-path)**: precomputes and distributes one-time verification keys
-  authenticated by a long-term PQ signature.
+* **Background plane (off-path)**: precomputes and distributes one-time verification (i.e., public) keys authenticated by a long-term PQ signature.
 
 The Looma design and evaluation appear in {{LoomaNDSS}}.
 
@@ -98,9 +96,9 @@ The Looma design and evaluation appear in {{LoomaNDSS}}.
 
 Looma is designed to:
 
-* Reduce the on-path computational cost of TLS 1.3 authentication.
-* Preserve the authentication semantics of TLS 1.3 (identity bound to certificate keys).
-* Minimize additional trust in auxiliary infrastructure (e.g., key distribution).
+* Reduce the on-path computational cost of PQTLS 1.3 authentication.
+* Preserve the authentication semantics of PQTLS 1.3 (identity bound to certificate keys).
+* Minimize additional trust in auxiliary infrastructure (e.g., key distribution service).
 
 ## Non-goals
 
@@ -115,20 +113,18 @@ This document does not specify:
 # Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT",
-"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as
-described in BCP 14 {{RFC2119}} {{RFC8174}} when, and only when, they appear in all capitals,
-as shown here.
+"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 {{RFC2119}} {{RFC8174}} when, and only when, they appear in all capitals, as shown here.
 
 This document uses the following terms:
 
-* **Endpoint**: a TLS client or server participating in the handshake.
+* **Endpoint**: a PQTLS client or server participating in the handshake.
 * **Long-term signing key (LT key)**: a multi-use PQ key pair (e.g., Dilithium-2).
   The LT public key is bound to the endpoint identity via an X.509 certificate.
 * **One-time signature (OTS)**: a signature scheme intended to sign at most one message
   per key pair. Looma uses WOTS+.
 * **WOTS+ key pair**: an OTS signing key `SK_ots` and verification key `PK_ots`.
 * **KeyDist**: a repository service used to publish OTS verification keys authenticated
-  under the LT key. KeyDist is not trusted for integrity; endpoints verify signatures.
+  under the LT key. KeyDist is not trusted for integrity; endpoints verify LT signatures.
 * **Cache hit / miss**: whether the verifier has a validated `PK_ots` for the peer at
   handshake time.
 
