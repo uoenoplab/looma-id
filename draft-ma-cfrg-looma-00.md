@@ -52,7 +52,7 @@ informative:
 # Abstract
 
 Post-quantum (PQ) authentication in TLS 1.3 can add tens to hundreds of microseconds of
-handshake processing time. In cloud datacenters, where mutual authentication is mandatory, connections are short-lived and handshake rates are high, this cost becomes a dominant contributor to end-to-end request latency.
+handshake processing time. In cloud datacenters, where mutual authentication is mandatory, connections are short-lived and handshake rates are high, this authentication cost becomes a dominant contributor to end-to-end request latency.
 
 This document specifies Looma, an online/offline authentication architecture integrated
 into the TLS 1.3 handshake. Looma replaces the on-path, per-handshake PQ signature with
@@ -82,10 +82,19 @@ as reference material or to cite them other than as "work in progress."
 TLS 1.3 authentication relies on digital signatures over the handshake transcript in the
 CertificateVerify message {{RFC8446}}. For post-quantum migration, widely deployed
 candidates (e.g., Dilithium and Falcon) incur higher signing costs than
-classical signatures.
+classical signatures. 
 
-In datacenter deployments, microservices and serverless architectures create many short-lived
-connections and frequent handshakes along with mutual authentications. Looma targets this setting by splitting PQ authentication into:
+In cloud environments these costs become a serious deployment barrier. Modern cloud applications are built from microservices and serverless functions. Each inter-service RPC triggers a fresh TLS handshake. Containers and pods are frequently created and destroyed, rendering session resumption ineffective. Service-mesh sidecars (Istio, Linkerd, etc.) add extra mTLS hops along every path. The resulting handshake rate is orders of magnitude higher than on the public Internet.
+
+Datacenter networks are engineered for sub-50 µs fabric latency; therefore the dominant delay is host cryptographic processing. Mutual authentication (mTLS) is mandatory inside the trust boundary to prevent unauthorized service-to-service access. In mTLS both endpoints sign and verify, doubling the authentication cost compared with server-only TLS. When post-quantum signatures are used, authentication can consume 54–70 % of total handshake latency (see {{Looma-NDSS26}} for measurements).
+
+Existing accelerations do not close this gap:
+
+* Protocol optimisations (KEMTLS) replaces signatures with KEMs, reducing the bandwidth cost during handshake, which is especially helpful in the Internet where RTT dominates the latency. However, the on-path KEM-based authentication time cost is still tens of microseconds. Besides, for mTLS case, KEMTLS requires extra round-trip time.
+
+* Cryptographic optimisations focus primarily on PQ key exchange; authentication remains the bottleneck for mTLS.
+
+Looma targets this setting by splitting PQ authentication into:
 
 * **Foreground plane (on-path)**: performs per-handshake fast signing and verification.
 * **Background plane (off-path)**: precomputes and distributes one-time verification (i.e., public) keys authenticated by a long-term PQ signature.
@@ -133,15 +142,15 @@ This document uses the following terms:
 Looma adapts the Even-Goldreich-Micali online/offline paradigm to TLS 1.3 authentication:
 
 1. Offline: an endpoint generates a batch of WOTS+ key pairs and authenticates them using
-   a long-term PQ signature over a Merkle tree root.
+   a long-term PQ signature over a Merkle tree root; 
 2. Online: during the TLS handshake, the endpoint signs the TLS CertificateVerify input
-   using a fresh WOTS+ key. The verifier validates the WOTS+ signature using a cached
+   using a fresh WOTS+ key `SK_ots`. The verifier validates the WOTS+ signature using a cached
    `PK_ots` or falls back to an authenticated Merkle proof.
 
-Two deployment modes are supported:
+Since this online/offline paradigm only works when the verifier has the right verification key, the fallback strategies are carefully considered when there is no validate key at the server side. Two fallback deployment modes are supported:
 
 * **Dual-signature mode**: each handshake carries enough data for verification without any
-  prior cached key (higher bandwidth, simple behavior).
+  prior cached verification key (higher bandwidth, simple behavior logic).
 * **Hybrid mode**: the server advertises a compact hint indicating which client keys are
   cached; the client includes fallback material only on cache miss (lower bandwidth).
 
@@ -149,8 +158,7 @@ Two deployment modes are supported:
 
 ## Long-term PQ signature
 
-Looma assumes an EUF-CMA secure multi-use signature scheme (e.g., Dilithium-2).
-The LT public key is authenticated in the usual TLS way via X.509 certificate validation.
+Looma assumes a non-hash-based secure multi-use signature scheme (e.g., Dilithium-2, Falcon-512). The LT public key is authenticated in the usual TLS way via X.509 certificate validation. It will also be authenticated during OTS verification key distribution.
 
 This document describes one instantiation aligned with {{LoomaNDSS}}:
 Dilithium-2 as the LT signature scheme.
