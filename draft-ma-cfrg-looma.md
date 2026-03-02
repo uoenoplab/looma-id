@@ -4,7 +4,7 @@ abbrev: "Looma"
 category: info
 docname: draft-ma-cfrg-looma-latest
 date:
-workgroup: CFRG
+workgroup: "Crypto Forum"
 submissiontype: IRTF
 ipr: trust200902
 keyword: Internet-Draft
@@ -34,11 +34,11 @@ informative:
     target: "https://dx.doi.org/10.14722/ndss.2026.240074"
     title: "Looma: A Low-Latency PQTLS Authentication Architecture for Cloud Applications"
     author:
-      - 
+      -
         ins: X. Ma
         name: Xinshu Ma
         org: University of Edinburgh
-      - 
+      -
         ins: M. Honda
         name: Michio Honda
         org: University of Edinburgh
@@ -80,7 +80,7 @@ as reference material or to cite them other than as "work in progress."
 TLS 1.3 authentication relies on digital signatures over the handshake transcript in the
 CertificateVerify message {{RFC8446}}. For post-quantum migration, widely deployed
 candidates (e.g., Dilithium and Falcon) incur higher signing costs than
-classical signatures. 
+classical signatures.
 
 In cloud environments these costs become a serious deployment barrier. Modern cloud applications are built from microservices and serverless functions. Each inter-service RPC triggers a fresh TLS handshake. Containers and pods are frequently created and destroyed, rendering session resumption ineffective. Service-mesh sidecars (Istio, Linkerd, etc.) add extra mTLS hops along every path. The resulting handshake rate is orders of magnitude higher than on the public Internet.
 
@@ -148,7 +148,7 @@ This document uses the following terms:
 Looma adapts the Even-Goldreich-Micali online/offline paradigm to TLS 1.3 authentication:
 
 1. Offline: an endpoint generates a batch of WOTS+ key pairs and authenticates them using
-   a long-term PQ signature over a Merkle tree root; 
+   a long-term PQ signature over a Merkle tree root;
 2. Online: during the TLS handshake, the endpoint signs the TLS CertificateVerify input
    using a fresh WOTS+ key `SK_ots`. The verifier validates the WOTS+ signature using a cached
    `PK_ots` or falls back to an authenticated Merkle proof.
