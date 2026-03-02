@@ -272,13 +272,13 @@ selected non-Looma signature scheme.
 
 ### Looma signature format
 
-Looma defines a signature wrapper `looma_sig` carried in the `CertificateVerify.signature` field.
+Looma defines a signature wrapper `LoomaSignature` carried in the `CertificateVerify.signature` field.
 
-All multi-byte integers are network byte order. The `looma_sig` MUST contain:
+All multi-byte integers are network byte order.
 
 ~~~text
 struct {
-  uint8  looma_sig_type;     /* 0 = dual, 1 = hybrid_short, 2 = hybrid_dual */
+  uint8  looma_sig_type;     /* 0 = dual, 1 = hybrid_hit, 2 = hybrid_miss */
   opaque owner_id<0..255>;  /* as defined in Section {#owner-id} */
   opaque pk_id<0..255>;     /* identifies which OTS key is used */
   opaque nonce<0..255>;     /* per-signature nonce r */
@@ -292,7 +292,7 @@ to locate the intended cached key or validate it via fallback data.
 
 #### Dual-signature mode (`looma_sig_type = 0`)
 
-In dual-signature mode, besides `looma_sig`, `fallback` MUST contain:
+In dual-signature mode, besides `LoomaSignature`, `fallback` MUST contain:
 
 ~~~text
 struct {
@@ -345,25 +345,25 @@ and carries `(nonce, pk_id)` alongside the signature; this document adopts expli
 
 Given `cv_input` and a received `LoomaSignature`, the verifier proceeds as follows:
 
-1. Determine the expected `PK_ots`:
+1. Determine the `expected_PK_ots`:
    * If in hybrid-hit mode, look up cached `PK_ots` using `(owner_id, pk_id)`.
    * Otherwise, validate fallback data:
      * verify `sig_lt` under the peer certificate LT public key,
-     * validate that the claimed `PK_ots` is included in `merkle_root` via `merkle_proof`,
-     * accept `PK_ots` and (optionally) cache it for future handshakes.
 
-2. Verify `wots_sig` over the bound input described above.
+2. Verify `wots_sig` over the bound input described above and derived the `computed_PK_ots`.
 
 3. Enforce one-time use:
-   * The verifier MUST ensure that `(owner_id, pk_id)` is not accepted more than once within the
-     applicable validity interval, unless the deployment defines a safe reuse policy (NOT RECOMMENDED).
+   * If in hybrid-hit mode, check if `computed_PK_ots` is the same as `expected_PK_ots`, and delete cached `expected_PK_ots` if there is a match.
+   * Otherwise, validate that the `computed_PK_ots` is included in `merkle_root` via `merkle_proof`.
+
+The verifier MUST ensure that `(owner_id, pk_id)` is not accepted more than once within the applicable validity interval, unless the deployment defines a safe reuse policy (NOT RECOMMENDED).
 
 If any check fails, the handshake MUST be aborted with an appropriate TLS alert.
 
 # Hybrid Mode Cache Hint Extension {#hybrid-hint}
 
 In hybrid mode, the server sends a compact hint indicating which client keys are cached, so that
-the client can select hybrid-hit vs hybrid-miss.
+the client can select looma signature type as hybrid_hit vs hybrid-miss.
 
 This document defines a new TLS extension (type TBD) carried in the `CertificateRequest` message.
 
@@ -376,13 +376,9 @@ struct {
 } LoomaCacheHint;
 ~~~
 
-The Bloom filter represents membership over client identifiers (e.g., client `owner_id` values)
-for which the server currently has a cached `PK_ots`. The exact element inserted MUST be specified
-by the deployment; RECOMMENDED is the client's `owner_id`.
+The Bloom filter represents membership over client identifiers (e.g., client `owner_id` values) for which the server currently has a list of cached `PK_ots`s. The exact element inserted MUST be specified by the deployment; RECOMMENDED is the client's `owner_id`.
 
-False positives are possible. If the server indicates membership but does not have the key, the
-server will reject hybrid-hit verification and the connection will fail. See Section {{fallback-on-fp}}
-for recovery behavior.
+False positives are possible. If the server indicates membership but does not have the key, the server will reject hybrid-hit verification and the connection will fail. See Section {{fallback-on-fp}} for recovery behavior.
 
 ## Fallback and Error Handling
 
@@ -428,8 +424,7 @@ Reusing a WOTS+ signing key across two different `cv_input` values can enable fo
 
 * Signers MUST enforce strict one-time use.
 * Verifiers SHOULD track used `(owner_id, pk_id)` values within the key validity interval.
-* Deployments MUST provision enough keys for the expected handshake rate and set key expiration to
-  bound state.
+* Deployments MUST provision enough keys for the expected handshake rate and set key expiration to bound state.
 
 ## Binding to certificate identity
 
@@ -439,22 +434,17 @@ achieves binding by (a) authenticating `merkle_root` under the LT key from the c
 
 ## KeyDist compromise
 
-A malicious KeyDist can withhold, replay, or reorder key records, causing denial of service or
-performance degradation (e.g., more cache misses), but MUST NOT enable authentication forgery if
-endpoints perform local verification and enforce freshness/epoch rules.
+A malicious KeyDist can withhold, replay, or reorder key records, causing denial of service or performance degradation (e.g., more cache misses), but MUST NOT enable authentication forgery if endpoints perform local verification and enforce freshness/epoch rules.
 
-Deployments SHOULD consider availability hardening (replication, multi-source fetching) and should
-ensure that stale records do not cause key reuse.
+Deployments SHOULD consider availability hardening (replication, multi-source fetching) and should ensure that stale records do not cause key reuse.
 
 ## Bloom filter privacy and integrity
 
 The cache hint can leak information about which client identifiers are cached by the server.
-Deployments concerned with this leakage SHOULD avoid hybrid mode or should scope hints to a small
-set of expected peers.
+Deployments concerned with this leakage SHOULD avoid hybrid mode or should scope hints to a small set of expected peers.
 
 An attacker who can modify the hint on-path can influence whether the client sends fallback material.
-However, the hint is carried inside the TLS handshake and is integrity protected by the handshake
-transcript; modifying it will fail the handshake.
+However, the hint is carried inside the TLS handshake and is integrity protected by the handshake transcript; modifying it will fail the handshake.
 
 # IANA Considerations
 
