@@ -45,9 +45,8 @@ informative:
     date: 2026
   RFC8391:
   RFC9345:
----
 
-# Abstract
+--- abstract
 
 Post-quantum (PQ) authentication in TLS 1.3 can add tens to hundreds of microseconds of
 handshake processing time. In datacenters, where mutual authentication is
@@ -62,10 +61,6 @@ the multi-use PQ signature) to an asynchronous background plane. Looma includes 
 fallback strategy to preserve correct authentication when the verifier does not have the
 peer's one-time verification key cached.
 
-This document is intended as a basis for CFRG review of the cryptographic and protocol
-design. It is written in an IETF style and uses RFC 2119 language. Some code points are
-left as "TBD" pending IANA considerations and/or future standard-track work.
-
 # Status of This Memo
 
 This Internet-Draft is submitted in full conformance with the provisions of BCP 78 and BCP 79.
@@ -77,6 +72,8 @@ The list of current Internet-Drafts is at https://datatracker.ietf.org/drafts/cu
 Internet-Drafts are draft documents valid for a maximum of six months and may be updated,
 replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts
 as reference material or to cite them other than as "work in progress."
+
+--- middle
 
 # Introduction
 
@@ -100,7 +97,15 @@ Looma targets this setting by splitting PQ authentication into:
 * **Foreground plane (on-path)**: performs per-handshake fast signing and verification.
 * **Background plane (off-path)**: precomputes and distributes one-time verification (i.e., public) keys authenticated by a long-term PQ signature.
 
-The Looma design and evaluation appear in {{LoomaNDSS}}.
+The Looma design and evaluation appear in {{LoomaNDSS}}, and its
+proof-of-concept implementation is available at
+https://github.com/uoenoplab/looma.
+
+This document is an initial draft submitted for discussion and to allow review
+of the use of cryptographic techniques by CFRG and the broader protocol design
+by the TLS community. The authors welcome feedback on both the use of post
+quantum cryptographic primitives, on their integration into TLS, and more
+broadly on the design goals
 
 ## Goals
 
@@ -148,7 +153,7 @@ Looma adapts the Even-Goldreich-Micali online/offline paradigm to TLS 1.3 authen
    using a fresh WOTS+ key `SK_ots`. The verifier validates the WOTS+ signature using a cached
    `PK_ots` or falls back to an authenticated Merkle proof.
 
-Since this online/offline paradigm only works when the verifier has the right verification key, the fallback strategies are carefully considered when there is no validate key at the server side. Two fallback deployment modes are supported:
+Since this online/offline paradigm only works when the verifier has the right verification key, the fallback strategies are required when there is no validate key at the server side. Two fallback deployment modes are supported:
 
 * **Dual-signature mode**: each handshake carries enough data for verification without any
   prior cached verification key (higher bandwidth, simple behavior logic).
@@ -462,6 +467,9 @@ This draft does not yet request code points and uses "TBD" placeholders.
 * Precise definition of `pk_id` mapping and whether it is stable across epochs.
 * Whether to standardize a specific `H_ots` for interoperability, or define a registry.
 * Interaction with delegated credentials {{RFC9345}} and deployment in service meshes.
+
+Besides those specific points, we seek feedback on the appropriate use of PQ cryptographic
+primitives from CFRG, and from the broader TLS community on TLS handshake integration.
 
 # Acknowledgements
 
