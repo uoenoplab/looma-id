@@ -284,7 +284,8 @@ All multi-byte integers are network byte order.
 
 ~~~text
 struct {
-  uint8  looma_sig_type;     /* 0 = dual, 1 = hybrid_hit, 2 = hybrid_miss */
+  uint8  looma_sig_type;    /* 0 = dual, 1 = hybrid_hit,
+                             * 2 = hybrid_miss */
   opaque owner_id<0..255>;  /* as defined in Section {#owner-id} */
   opaque pk_id<0..255>;     /* identifies which OTS key is used */
   opaque nonce<0..255>;     /* per-signature nonce r */
