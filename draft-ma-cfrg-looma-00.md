@@ -189,11 +189,13 @@ The WOTS+ signature is computed over the TLS CertificateVerify input (see Sectio
 {{RFC8446}}) and an associated nonce `r`. The nonce serves as domain separation and helps
 avoid accidental cross-protocol reuse. The nonce MUST be unique per WOTS+ signing key.
 
-# Key Provisioning and Authentication (Background Plane)
+# Looma Authentication Architecture
+
+## Key Provisioning and Authentication (Background Plane)
 
 This section defines the data produced off-path and consumed by the handshake.
 
-## Key records
+### Key records
 
 An endpoint periodically produces a **key record** containing a batch of OTS verification keys.
 A key record MUST include:
@@ -205,8 +207,8 @@ A key record MUST include:
 * `valid_from`, `valid_to`: validity interval for the OTS keys in this record.
 * `merkle_root`: root of the Merkle tree over OTS public keys.
 * `sig_lt`: LT signature authenticating the key record metadata and `merkle_root`.
-* `pk_list` (OPTIONAL): list of OTS public keys if the distribution mechanism delivers full
-  keys rather than Merkle leaves; this document assumes full keys are distributable but does
+* `pk_list` (OPTIONAL): list of OTS public keys as the distribution mechanism delivers full
+  keys; this document assumes full keys are distributable but does
   not mandate KeyDist internal format.
 
 Key record authentication:
@@ -216,7 +218,7 @@ Key record authentication:
 * A consumer MUST verify `sig_lt` under the LT public key from the producer's validated
   certificate, before accepting any OTS keys derived from the record.
 
-### owner-id {#owner-id}
+#### owner-id {#owner-id}
 
 `owner_id` is used as a stable index for caching the peer's OTS keys.
 `owner_id` MUST be bound to the peer identity authenticated by TLS certificate validation.
@@ -225,7 +227,7 @@ RECOMMENDED: `owner_id = SHA-256(SPKI)` where `SPKI` is the DER-encoded SubjectP
 of the LT public key in the certificate. Other constructions MAY be used if they provide a
 collision-resistant, stable binding to the LT key.
 
-## Merkle tree construction
+### Merkle tree construction
 
 An endpoint constructs a binary Merkle tree over the batch of OTS public keys. The leaf value
 for key `i` is:
@@ -240,10 +242,10 @@ The tree root is `merkle_root`. The record MUST allow a verifier to validate an 
 Implementation note (informative): {{LoomaNDSS}} evaluates `B = 1024` leaves and 32-byte hash
 values, yielding a proof of `log2(B) * 32` bytes (320 bytes).
 
-## KeyDist behavior
+### KeyDist behavior
 
-KeyDist is an optional distribution component that stores and serves key records. This document
-treats KeyDist as an untrusted repository:
+KeyDist is a distribution component that stores and serves key records. This document
+treats KeyDist as a repository without trusting it:
 
 * KeyDist MAY validate records before storing them, but consumers MUST NOT rely on KeyDist
   validation for security.
@@ -251,37 +253,36 @@ treats KeyDist as an untrusted repository:
 * A compromised KeyDist can cause denial of service (e.g., withholding records), but MUST NOT
   enable signature forgery if endpoints follow this specification.
 
-# TLS 1.3 Integration (Foreground Plane)
+## TLS 1.3 Integration (Foreground Plane)
 
 This section specifies how Looma is carried in TLS 1.3 and how the CertificateVerify message
 is generated and verified.
 
-## Negotiation
+### Looma negotiation
 
-Looma is negotiated using the TLS 1.3 `signature_algorithms` extension and one new extension.
+Looma is negotiated using the TLS 1.3 `signature_algorithms` extension.
 
-* Endpoints that support Looma MUST advertise one or more Looma signature schemes in
-  `signature_algorithms` (code points TBD).
+* Endpoints that support Looma MUST advertise Looma signature scheme in
+  `signature_algorithms`.
 * The server selects a Looma scheme in the usual TLS 1.3 way when producing CertificateVerify.
 * Hybrid mode additionally uses a server-to-client hint extension (Section {{hybrid-hint}}).
 
 If Looma is not negotiated, endpoints MUST use standard TLS 1.3 authentication with the
 selected non-Looma signature scheme.
 
-## Looma signature format
+### Looma signature format
 
-Looma defines a signature wrapper carried in the `CertificateVerify.signature` field.
+Looma defines a signature wrapper `looma_sig` carried in the `CertificateVerify.signature` field.
 
-All multi-byte integers are network byte order.
+All multi-byte integers are network byte order. The `looma_sig` MUST contain:
 
 ~~~text
 struct {
-  uint8  looma_mode;        /* 0 = dual, 1 = hybrid_hit, 2 = hybrid_miss */
+  uint8  looma_sig_type;     /* 0 = dual, 1 = hybrid_short, 2 = hybrid_dual */
   opaque owner_id<0..255>;  /* as defined in Section {#owner-id} */
   opaque pk_id<0..255>;     /* identifies which OTS key is used */
   opaque nonce<0..255>;     /* per-signature nonce r */
   opaque wots_sig<0..2^16-1>;
-  opaque fallback<0..2^16-1>; /* present only in modes that carry fallback */
 } LoomaSignature;
 ~~~
 
@@ -289,9 +290,9 @@ struct {
 of `pk_id` to a concrete key is deployment-specific, but `pk_id` MUST be sufficient for the verifier
 to locate the intended cached key or validate it via fallback data.
 
-### Dual-signature mode (`looma_mode = 0`)
+#### Dual-signature mode (`looma_sig_type = 0`)
 
-In dual-signature mode, `fallback` MUST contain:
+In dual-signature mode, besides `looma_sig`, `fallback` MUST contain:
 
 ~~~text
 struct {
@@ -301,20 +302,20 @@ struct {
 } LoomaFallbackDual;
 ~~~
 
+`fallback` is carried in the `CertificateVerify` extension filed.
 The verifier uses the peer certificate to obtain `PK_lt` and verify `sig_lt` over the authenticated
 root and associated record fields (the record fields MUST be reconstructible or transmitted as part
 of the proof bundle in a future version; see Section {{open-issues}}).
 
-### Hybrid-hit mode (`looma_mode = 1`)
+#### Hybrid-hit mode (`looma_sig_type = 1`)
 
-In hybrid-hit mode, `fallback` MUST be empty. The verifier MUST have a cached, validated `PK_ots`
-for `(owner_id, pk_id)`.
+In hybrid-hit mode, `fallback` MUST be empty. The verifier MUST have a cached, validated `PK_ots` for `(owner_id, pk_id)`.
 
-### Hybrid-miss mode (`looma_mode = 2`)
+#### Hybrid-miss mode (`looma_sig_type = 2`)
 
 In hybrid-miss mode, `fallback` is identical to `LoomaFallbackDual`.
 
-## Computing CertificateVerify
+### Computing CertificateVerify
 
 TLS 1.3 defines the signed content for CertificateVerify as:
 
@@ -335,12 +336,12 @@ The endpoint MUST ensure one-time use of `SK_ots` and MUST bind the WOTS+ signat
 mode, `owner_id`, `pk_id`, and `nonce` (e.g., by including these fields in `cv_input` via an inner
 hash) to prevent substitution attacks. One safe construction is:
 
-`wots_sig = WOTS.Sign( H_bind(looma_mode || owner_id || pk_id || nonce || cv_input), SK_ots )`
+`wots_sig = WOTS.Sign( H_bind(owner_id || pk_id || nonce || cv_input), SK_ots )`
 
 where `H_bind` is collision-resistant. The reference design in {{LoomaNDSS}} signs the transcript
 and carries `(nonce, pk_id)` alongside the signature; this document adopts explicit binding.
 
-## Verifying CertificateVerify
+### Verifying CertificateVerify
 
 Given `cv_input` and a received `LoomaSignature`, the verifier proceeds as follows:
 
@@ -383,9 +384,9 @@ False positives are possible. If the server indicates membership but does not ha
 server will reject hybrid-hit verification and the connection will fail. See Section {{fallback-on-fp}}
 for recovery behavior.
 
-# Fallback and Error Handling
+## Fallback and Error Handling
 
-## Cache miss behavior
+### Cache miss behavior
 
 If the verifier does not have the peer `PK_ots` cached:
 
@@ -394,7 +395,7 @@ If the verifier does not have the peer `PK_ots` cached:
   * If the client receives a hint indicating miss, it MUST send hybrid-miss (with fallback).
   * If the client receives a hint indicating hit, it sends hybrid-hit (without fallback).
 
-## False positives and recovery {#fallback-on-fp}
+### False positives and recovery {#fallback-on-fp}
 
 If a hybrid-hit handshake fails because the server cannot validate the signature due to missing
 cached key (e.g., Bloom false positive), endpoints SHOULD recover by retrying with a full
