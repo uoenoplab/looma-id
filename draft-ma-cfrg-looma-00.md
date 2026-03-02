@@ -43,7 +43,6 @@ informative:
         name: Michio Honda
         org: University of Edinburgh
     date: 2026
-  RFC8391:
   RFC9345:
 
 --- abstract
