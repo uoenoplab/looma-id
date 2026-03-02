@@ -2,10 +2,15 @@
 title: "Looma: Low-Latency Post-Quantum Authentication for TLS 1.3 in Datacenters"
 abbrev: "Looma"
 category: info
+
 docname: draft-ma-cfrg-looma-latest
-date:
-workgroup: "Crypto Forum"
 submissiontype: IRTF
+number:
+date:
+consensus: true
+v: 3
+
+workgroup: "Crypto Forum"
 ipr: trust200902
 keyword: Internet-Draft
 stand_alone: yes
