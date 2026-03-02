@@ -479,4 +479,4 @@ primitives from CFRG, and from the broader TLS community on TLS handshake integr
 
 # Acknowledgements
 
-The Looma design is described in {{LoomaNDSS26}}. The authors thank the CFRG community for feedback.
+The authors thank the CFRG community for feedback.
