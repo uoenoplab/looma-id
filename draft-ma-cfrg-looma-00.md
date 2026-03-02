@@ -3,27 +3,13 @@ title: "Looma: Low-Latency Post-Quantum Authentication for TLS 1.3 in Datacenter
 abbrev: "Looma"
 category: info
 docname: draft-ma-cfrg-looma-00
-submissiontype: IRTF
-number:
 date:
-consensus: false
-v: 3
-area: Security
 workgroup: CFRG
-keyword:
- - post-quantum cryptography
- - TLS 1.3
- - authentication
- - online/offline signatures
- - WOTS+
- - datacenters
-venue:
-  group: CFRG
-  type: Research Group
-  mail: cfrg@ietf.org
-  arch: https://mailarchive.ietf.org/arch/browse/cfrg/
-  github: https://github.com/
-  latest: https://datatracker.ietf.org/doc/draft-ma-cfrg-looma/
+submissiontype: IRTF
+ipr: trust200902
+keyword: Internet-Draft
+stand_alone: yes
+pi: [toc, sortrefs, symrefs]
 author:
  - ins: X. Ma
    name: Xinshu Ma
@@ -36,18 +22,26 @@ author:
  - ins: C. Perkins
    name: Colin Perkins
    org: University of Glasgow
-   email: michio.honda@inf.ed.ac.uk
+   email: csp@csperkins.org
 normative:
   RFC8446:
   RFC2119:
   RFC8174:
 informative:
   LoomaNDSS:
+    seriesinfo:
+      "In": Network and Distributed System Symposium (NDSS)
     target: "https://dx.doi.org/10.14722/ndss.2026.240074"
     title: "Looma: A Low-Latency PQTLS Authentication Architecture for Cloud Applications"
     author:
-      - name: "Xinshu Ma"
-      - name: "Michio Honda"
+      - 
+        ins: X. Ma
+        name: Xinshu Ma
+        org: University of Edinburgh
+      - 
+        ins: M. Honda
+        name: Michio Honda
+        org: University of Edinburgh
     date: 2026
   RFC8391:
   RFC9345:
