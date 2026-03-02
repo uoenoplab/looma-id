@@ -681,8 +681,7 @@ Table of Contents
 
 11.  Acknowledgements
 
-   The Looma design is described in [LoomaNDSS26].  The authors thank
-   the CFRG community for feedback.
+   The authors thank the CFRG community for feedback.
 
 12.  References
 
