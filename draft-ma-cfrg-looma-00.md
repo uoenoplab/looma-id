@@ -30,7 +30,7 @@ normative:
 informative:
   LoomaNDSS26:
     seriesinfo:
-      "In": Network and Distributed System Symposium (NDSS)
+      "In": Network and Distributed System Security (NDSS) Symposium
     target: "https://dx.doi.org/10.14722/ndss.2026.240074"
     title: "Looma: A Low-Latency PQTLS Authentication Architecture for Cloud Applications"
     author:
