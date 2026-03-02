@@ -28,7 +28,7 @@ normative:
   RFC2119:
   RFC8174:
 informative:
-  LoomaNDSS:
+  LoomaNDSS26:
     seriesinfo:
       "In": Network and Distributed System Symposium (NDSS)
     target: "https://dx.doi.org/10.14722/ndss.2026.240074"
@@ -61,6 +61,8 @@ the multi-use PQ signature) to an asynchronous background plane. Looma includes 
 fallback strategy to preserve correct authentication when the verifier does not have the
 peer's one-time verification key cached.
 
+--- middle
+
 # Status of This Memo
 
 This Internet-Draft is submitted in full conformance with the provisions of BCP 78 and BCP 79.
@@ -73,7 +75,6 @@ Internet-Drafts are draft documents valid for a maximum of six months and may be
 replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts
 as reference material or to cite them other than as "work in progress."
 
---- middle
 
 # Introduction
 
@@ -84,7 +85,7 @@ classical signatures.
 
 In cloud environments these costs become a serious deployment barrier. Modern cloud applications are built from microservices and serverless functions. Each inter-service RPC triggers a fresh TLS handshake. Containers and pods are frequently created and destroyed, rendering session resumption ineffective. Service-mesh sidecars (Istio, Linkerd, etc.) add extra mTLS hops along every path. The resulting handshake rate is orders of magnitude higher than on the public Internet.
 
-Datacenter networks are engineered for sub-50 µs fabric latency; therefore the dominant delay is host cryptographic processing. Mutual authentication (mTLS) is mandatory inside the trust boundary to prevent unauthorized service-to-service access. In mTLS both endpoints sign and verify, doubling the authentication cost compared with server-only TLS. When post-quantum signatures are used, authentication can consume 54–70 % of total handshake latency (see {{Looma-NDSS26}} for measurements).
+Datacenter networks are engineered for sub-50 µs fabric latency; therefore the dominant delay is host cryptographic processing. Mutual authentication (mTLS) is mandatory inside the trust boundary to prevent unauthorized service-to-service access. In mTLS both endpoints sign and verify, doubling the authentication cost compared with server-only TLS. When post-quantum signatures are used, authentication can consume 54–70 % of total handshake latency (see {{LoomaNDSS26}} for measurements).
 
 Existing accelerations do not close this gap:
 
@@ -97,7 +98,7 @@ Looma targets this setting by splitting PQ authentication into:
 * **Foreground plane (on-path)**: performs per-handshake fast signing and verification.
 * **Background plane (off-path)**: precomputes and distributes one-time verification (i.e., public) keys authenticated by a long-term PQ signature.
 
-The Looma design and evaluation appear in {{LoomaNDSS}}, and its
+The Looma design and evaluation appear in {{LoomaNDSS26}}, and its
 proof-of-concept implementation is available at
 https://github.com/uoenoplab/looma.
 
@@ -166,7 +167,7 @@ Since this online/offline paradigm only works when the verifier has the right ve
 
 Looma assumes a non-hash-based secure multi-use signature scheme (e.g., Dilithium-2, Falcon-512). The LT public key is authenticated in the usual TLS way via X.509 certificate validation. It will also be authenticated during OTS verification key distribution.
 
-This document describes one instantiation aligned with {{LoomaNDSS}}:
+This document describes one instantiation aligned with {{LoomaNDSS26}}:
 Dilithium-2 as the LT signature scheme.
 
 ## WOTS+ (Winternitz One-Time Signature Plus)
@@ -179,7 +180,7 @@ distinct CertificateVerify input with the same `SK_ots`.
 To avoid ambiguity, this document defines a single mandatory parameter set (other sets MAY
 be specified by future documents).
 
-The mandatory set matches the Looma implementation evaluated in {{LoomaNDSS}}:
+The mandatory set matches the Looma implementation evaluated in {{LoomaNDSS26}}:
 
 * `n = 32` bytes (hash output length).
 * Winternitz parameter `w = 4`.
@@ -187,7 +188,7 @@ The mandatory set matches the Looma implementation evaluated in {{LoomaNDSS}}:
 
 The hash function used inside WOTS+ is denoted `H_ots`. This document does not require a
 specific `H_ots` at the protocol level; however, the reference implementation uses Haraka
-(and a SIMD variant) for performance as described in {{LoomaNDSS}}.
+(and a SIMD variant) for performance as described in {{LoomaNDSS26}}.
 
 ### Nonce
 
@@ -245,7 +246,7 @@ of the OTS public key for the parameter set.
 
 The tree root is `merkle_root`. The record MUST allow a verifier to validate an inclusion proof.
 
-Implementation note (informative): {{LoomaNDSS}} evaluates `B = 1024` leaves and 32-byte hash
+Implementation note (informative): {{LoomaNDSS26}} evaluates `B = 1024` leaves and 32-byte hash
 values, yielding a proof of `log2(B) * 32` bytes (320 bytes).
 
 ### KeyDist behavior
@@ -344,7 +345,7 @@ hash) to prevent substitution attacks. One safe construction is:
 
 `wots_sig = WOTS.Sign( H_bind(owner_id || pk_id || nonce || cv_input), SK_ots )`
 
-where `H_bind` is collision-resistant. The reference design in {{LoomaNDSS}} signs the transcript
+where `H_bind` is collision-resistant. The reference design in {{LoomaNDSS26}} signs the transcript
 and carries `(nonce, pk_id)` alongside the signature; this document adopts explicit binding.
 
 ### Verifying CertificateVerify
@@ -410,7 +411,7 @@ as `handshake_failure` or `illegal_parameter` to signal verification failure, co
 
 # Security Considerations
 
-This section summarizes security arguments aligned with {{LoomaNDSS}}.
+This section summarizes security arguments aligned with {{LoomaNDSS26}}.
 
 ## Signature unforgeability
 
@@ -473,4 +474,4 @@ primitives from CFRG, and from the broader TLS community on TLS handshake integr
 
 # Acknowledgements
 
-The Looma design is described in {{LoomaNDSS}}. The authors thank the CFRG community for feedback.
+The Looma design is described in {{LoomaNDSS26}}. The authors thank the CFRG community for feedback.
