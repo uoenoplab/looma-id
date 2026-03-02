@@ -32,6 +32,10 @@ author:
  - ins: M. Honda
    name: Michio Honda
    org: University of Edinburgh
+   email: michio.honda@ed.ac.uk
+ - ins: C. Perkins
+   name: Colin Perkins
+   org: University of Glasgow
    email: michio.honda@inf.ed.ac.uk
 normative:
   RFC8446:
@@ -52,7 +56,10 @@ informative:
 # Abstract
 
 Post-quantum (PQ) authentication in TLS 1.3 can add tens to hundreds of microseconds of
-handshake processing time. In cloud datacenters, where mutual authentication is mandatory, connections are short-lived and handshake rates are high, this authentication cost becomes a dominant contributor to end-to-end request latency.
+handshake processing time. In datacenters, where mutual authentication is
+mandatory, this authentication cost becomes a dominant contributor to end-to-end
+request latency, particularly when connections are short-lived and handshake
+rates are high.
 
 This document specifies Looma, an online/offline authentication architecture integrated
 into the TLS 1.3 handshake. Looma replaces the on-path, per-handshake PQ signature with
